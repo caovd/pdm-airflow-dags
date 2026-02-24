@@ -1,0 +1,42 @@
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: cmapss-sensor-etl-fd001
+  namespace: pdm-demo
+spec:
+  type: Python
+  mode: cluster
+  image: caovd/pdm-spark-etl:latest
+  imagePullPolicy: Always
+  mainApplicationFile: local:///opt/pdm/scripts/etl/sensor_etl_spark.py
+  arguments:
+    - "--subset"
+    - "FD001"
+  sparkVersion: "3.5.0"
+  restartPolicy:
+    type: OnFailure
+    onFailureRetries: 2
+  volumes:
+    - name: data-volume
+      persistentVolumeClaim:
+        claimName: pv-datasets
+  driver:
+    cores: 1
+    memory: "4g"
+    serviceAccount: spark
+    volumeMounts:
+      - name: data-volume
+        mountPath: /mnt/data
+    env:
+      - name: PDM_STORAGE_ROOT
+        value: /mnt/data
+  executor:
+    cores: 4
+    instances: 2
+    memory: "8g"
+    volumeMounts:
+      - name: data-volume
+        mountPath: /mnt/data
+    env:
+      - name: PDM_STORAGE_ROOT
+        value: /mnt/data
