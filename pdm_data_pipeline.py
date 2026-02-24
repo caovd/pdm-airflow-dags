@@ -32,10 +32,6 @@ from airflow.utils.trigger_rule import TriggerRule
 
 NAMESPACE = "pdm-demo"
 
-# HPE Spark Operator API group (differs from open-source sparkoperator.k8s.io)
-SPARK_API_GROUP = "sparkoperator.hpe.com"
-SPARK_API_VERSION = "v1beta2"
-
 # Paths on the user PVC (auto-mounted in every executor pod at /mnt/user)
 PROJECT_ROOT = "/mnt/user/pdm-demo"
 STORAGE_ROOT = "/mnt/user/pdm-demo/data"
@@ -149,8 +145,6 @@ with DAG(
         task_id="sensor_etl_spark",
         namespace=NAMESPACE,
         application_file="cmapss-sensor-etl.yaml",
-        api_group=SPARK_API_GROUP,
-        api_version=SPARK_API_VERSION,
         do_xcom_push=True,
         doc_md=(
             "Spark job: C-MAPSS sensor ETL.\n"
@@ -167,8 +161,6 @@ with DAG(
         task_id="sensor_etl_monitor",
         namespace=NAMESPACE,
         application_name="cmapss-sensor-etl-fd001",
-        api_group=SPARK_API_GROUP,
-        api_version=SPARK_API_VERSION,
         poke_interval=30,
         timeout=3600,
     )
@@ -197,8 +189,6 @@ with DAG(
         task_id="text_etl_spark",
         namespace=NAMESPACE,
         application_file="maintnet-text-etl.yaml",
-        api_group=SPARK_API_GROUP,
-        api_version=SPARK_API_VERSION,
         do_xcom_push=True,
         doc_md=(
             "Spark job: MaintNet text ETL.\n"
@@ -215,8 +205,6 @@ with DAG(
         task_id="text_etl_monitor",
         namespace=NAMESPACE,
         application_name="maintnet-text-etl-aviation",
-        api_group=SPARK_API_GROUP,
-        api_version=SPARK_API_VERSION,
         poke_interval=30,
         timeout=3600,
     )
