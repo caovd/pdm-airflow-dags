@@ -146,7 +146,7 @@ with DAG(
     sensor_etl = SparkKubernetesOperator(
         task_id="sensor_etl_spark",
         namespace=NAMESPACE,
-        application_file=f"{SPARK_YAML_DIR}/cmapss-sensor-etl.yaml",
+        application_file=f"cmapss-sensor-etl.yaml",
         do_xcom_push=True,
         doc_md=(
             "Spark job: C-MAPSS sensor ETL.\n"
@@ -190,7 +190,7 @@ with DAG(
     text_etl = SparkKubernetesOperator(
         task_id="text_etl_spark",
         namespace=NAMESPACE,
-        application_file=f"{SPARK_YAML_DIR}/maintnet-text-etl.yaml",
+        application_file=f"maintnet-text-etl.yaml",
         do_xcom_push=True,
         doc_md=(
             "Spark job: MaintNet text ETL.\n"
