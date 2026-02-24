@@ -70,6 +70,18 @@ POD_ENV_VARS = {
 
 
 # ---------------------------------------------------------------------------
+# Helper: build shell command that cd's into project root first
+# ---------------------------------------------------------------------------
+
+def _pod_cmd(python_module: str, *args: str) -> list:
+    """Return arguments list for KubernetesPodOperator using /bin/bash -c."""
+    cmd = f"cd {PROJECT_ROOT} && python -m {python_module}"
+    if args:
+        cmd += " " + " ".join(args)
+    return [cmd]
+
+
+# ---------------------------------------------------------------------------
 # Helper: SparkApplication YAML generator
 # ---------------------------------------------------------------------------
 
@@ -163,10 +175,9 @@ with DAG(
         task_id="ingest_cmapss",
         namespace=USER_NAMESPACE,
         image=SPARK_IMAGE,
-        cmds=["python", "-m", "scripts.ingestion.ingest_cmapss"],
-        arguments=["--source", "nasa", "--subsets", "FD001"],
+        cmds=["/bin/bash", "-c"],
+        arguments=_pod_cmd("scripts.ingestion.ingest_cmapss", "--source", "nasa", "--subsets", "FD001"),
         env_vars=POD_ENV_VARS,
-        working_dir=PROJECT_ROOT,
         volumes=[DATA_VOLUME],
         volume_mounts=[DATA_VOLUME_MOUNT],
         name="ingest-cmapss",
@@ -179,10 +190,9 @@ with DAG(
         task_id="ingest_maintnet",
         namespace=USER_NAMESPACE,
         image=SPARK_IMAGE,
-        cmds=["python", "-m", "scripts.ingestion.ingest_maintnet"],
-        arguments=["--domains", "aviation"],
+        cmds=["/bin/bash", "-c"],
+        arguments=_pod_cmd("scripts.ingestion.ingest_maintnet", "--domains", "aviation"),
         env_vars=POD_ENV_VARS,
-        working_dir=PROJECT_ROOT,
         volumes=[DATA_VOLUME],
         volume_mounts=[DATA_VOLUME_MOUNT],
         name="ingest-maintnet",
@@ -199,15 +209,13 @@ with DAG(
         task_id="validate_raw_cmapss",
         namespace=USER_NAMESPACE,
         image=SPARK_IMAGE,
-        cmds=["python", "-m", "scripts.validation.validate"],
-        arguments=[
-            "--stage", "raw",
-            "--dataset", "cmapss",
-            "--subset", "FD001",
+        cmds=["/bin/bash", "-c"],
+        arguments=_pod_cmd(
+            "scripts.validation.validate",
+            "--stage", "raw", "--dataset", "cmapss", "--subset", "FD001",
             "--output-dir", f"{STORAGE_ROOT}/validation_reports/",
-        ],
+        ),
         env_vars=POD_ENV_VARS,
-        working_dir=PROJECT_ROOT,
         volumes=[DATA_VOLUME],
         volume_mounts=[DATA_VOLUME_MOUNT],
         name="validate-raw-cmapss",
@@ -220,15 +228,13 @@ with DAG(
         task_id="validate_raw_maintnet",
         namespace=USER_NAMESPACE,
         image=SPARK_IMAGE,
-        cmds=["python", "-m", "scripts.validation.validate"],
-        arguments=[
-            "--stage", "raw",
-            "--dataset", "maintnet",
-            "--domain", "aviation",
+        cmds=["/bin/bash", "-c"],
+        arguments=_pod_cmd(
+            "scripts.validation.validate",
+            "--stage", "raw", "--dataset", "maintnet", "--domain", "aviation",
             "--output-dir", f"{STORAGE_ROOT}/validation_reports/",
-        ],
+        ),
         env_vars=POD_ENV_VARS,
-        working_dir=PROJECT_ROOT,
         volumes=[DATA_VOLUME],
         volume_mounts=[DATA_VOLUME_MOUNT],
         name="validate-raw-maintnet",
@@ -287,15 +293,13 @@ with DAG(
         task_id="validate_sensor_processed",
         namespace=USER_NAMESPACE,
         image=SPARK_IMAGE,
-        cmds=["python", "-m", "scripts.validation.validate"],
-        arguments=[
-            "--stage", "processed",
-            "--dataset", "cmapss",
-            "--subset", "FD001",
+        cmds=["/bin/bash", "-c"],
+        arguments=_pod_cmd(
+            "scripts.validation.validate",
+            "--stage", "processed", "--dataset", "cmapss", "--subset", "FD001",
             "--output-dir", f"{STORAGE_ROOT}/validation_reports/",
-        ],
+        ),
         env_vars=POD_ENV_VARS,
-        working_dir=PROJECT_ROOT,
         volumes=[DATA_VOLUME],
         volume_mounts=[DATA_VOLUME_MOUNT],
         name="validate-sensor-processed",
@@ -307,15 +311,13 @@ with DAG(
         task_id="validate_sensor_features",
         namespace=USER_NAMESPACE,
         image=SPARK_IMAGE,
-        cmds=["python", "-m", "scripts.validation.validate"],
-        arguments=[
-            "--stage", "features",
-            "--dataset", "cmapss",
-            "--subset", "FD001",
+        cmds=["/bin/bash", "-c"],
+        arguments=_pod_cmd(
+            "scripts.validation.validate",
+            "--stage", "features", "--dataset", "cmapss", "--subset", "FD001",
             "--output-dir", f"{STORAGE_ROOT}/validation_reports/",
-        ],
+        ),
         env_vars=POD_ENV_VARS,
-        working_dir=PROJECT_ROOT,
         volumes=[DATA_VOLUME],
         volume_mounts=[DATA_VOLUME_MOUNT],
         name="validate-sensor-features",
@@ -363,15 +365,13 @@ with DAG(
         task_id="validate_text_processed",
         namespace=USER_NAMESPACE,
         image=SPARK_IMAGE,
-        cmds=["python", "-m", "scripts.validation.validate"],
-        arguments=[
-            "--stage", "processed",
-            "--dataset", "maintnet",
-            "--domain", "aviation",
+        cmds=["/bin/bash", "-c"],
+        arguments=_pod_cmd(
+            "scripts.validation.validate",
+            "--stage", "processed", "--dataset", "maintnet", "--domain", "aviation",
             "--output-dir", f"{STORAGE_ROOT}/validation_reports/",
-        ],
+        ),
         env_vars=POD_ENV_VARS,
-        working_dir=PROJECT_ROOT,
         volumes=[DATA_VOLUME],
         volume_mounts=[DATA_VOLUME_MOUNT],
         name="validate-text-processed",
