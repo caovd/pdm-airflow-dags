@@ -30,7 +30,7 @@ from airflow.utils.trigger_rule import TriggerRule
 # DAG configuration
 # ---------------------------------------------------------------------------
 
-NAMESPACE = "pdm-demo"
+NAMESPACE = "project-user-daniel-cao"
 
 # Paths on the user PVC (auto-mounted in every executor pod at /mnt/user)
 PROJECT_ROOT = "/mnt/user/pdm-demo"

@@ -2,7 +2,7 @@ apiVersion: sparkoperator.hpe.com/v1beta2
 kind: SparkApplication
 metadata:
   name: cmapss-sensor-etl-fd001
-  namespace: pdm-demo
+  namespace: project-user-daniel-cao
   labels:
     app.kubernetes.io/part-of: pdm-demo
     pipeline-phase: "2"
@@ -21,10 +21,9 @@ spec:
     type: OnFailure
     onFailureRetries: 2
     onFailureRetryInterval: 30
-  volumes:
-    - name: data-volume
-      persistentVolumeClaim:
-        claimName: pv-datasets
+  # No custom volumes needed — HPE Spark Operator auto-injects:
+  #   user-volume   → user-pvc        → /mnt/user
+  #   shared-volume → kubeflow-shared-pvc → /mnt/shared
   driver:
     cores: 1
     coreLimit: "2"
@@ -33,12 +32,9 @@ spec:
     labels:
       component: spark-driver
       job: sensor-etl
-    volumeMounts:
-      - name: data-volume
-        mountPath: /mnt/data
     env:
       - name: PDM_STORAGE_ROOT
-        value: "/mnt/data"
+        value: "/mnt/user/pdm-demo/data"
       - name: PYTHONPATH
         value: "/opt/pdm"
   executor:
@@ -49,11 +45,8 @@ spec:
     labels:
       component: spark-executor
       job: sensor-etl
-    volumeMounts:
-      - name: data-volume
-        mountPath: /mnt/data
     env:
       - name: PDM_STORAGE_ROOT
-        value: "/mnt/data"
+        value: "/mnt/user/pdm-demo/data"
       - name: PYTHONPATH
         value: "/opt/pdm"
