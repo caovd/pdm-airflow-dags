@@ -11,6 +11,8 @@ Pipeline flow:
                                                └──[text_etl_spark]────[validate_text_processed]────┘
 
 Runs on HPE AI Essentials' built-in Apache Airflow.
+Executor pods auto-mount user PVC at /mnt/user, so project code and data
+are accessible at /mnt/user/pdm-demo/ without custom images.
 Spark jobs are submitted via SparkKubernetesOperator to the AIE Spark cluster.
 """
 
@@ -20,10 +22,8 @@ from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.providers.cncf.kubernetes.operators.spark_kubernetes import SparkKubernetesOperator
 from airflow.providers.cncf.kubernetes.sensors.spark_kubernetes import SparkKubernetesSensor
-from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.utils.trigger_rule import TriggerRule
-from kubernetes.client import models as k8s
 
 
 # ---------------------------------------------------------------------------
@@ -31,12 +31,20 @@ from kubernetes.client import models as k8s
 # ---------------------------------------------------------------------------
 
 NAMESPACE = "pdm-demo"
-USER_NAMESPACE = "project-user-daniel-cao"
 SPARK_IMAGE = "caovd/pdm-spark-etl:latest"
 SERVICE_ACCOUNT = "spark"
+
+# Paths on the user PVC (auto-mounted in every executor pod at /mnt/user)
+PROJECT_ROOT = "/mnt/user/pdm-demo"
+STORAGE_ROOT = "/mnt/user/pdm-demo/data"
+
+# Spark jobs use PVC pv-datasets mounted at /mnt/data inside the Spark container
+SPARK_STORAGE_ROOT = "/mnt/data"
+SPARK_PROJECT_ROOT = "/opt/pdm"
 DATA_PVC = "pv-datasets"
-STORAGE_ROOT = "/mnt/data"
-PROJECT_ROOT = "/opt/pdm"
+
+# Pip install command to ensure dependencies are available in executor pods
+PIP_INSTALL = "pip install --quiet --break-system-packages pandas requests pyarrow 2>/dev/null; "
 
 default_args = {
     "owner": "Daniel Cao",
@@ -47,38 +55,21 @@ default_args = {
     "execution_timeout": timedelta(hours=2),
 }
 
-# ---------------------------------------------------------------------------
-# Shared volume config for KubernetesPodOperator tasks
-# ---------------------------------------------------------------------------
-
-DATA_VOLUME = k8s.V1Volume(
-    name="data-volume",
-    persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(
-        claim_name=DATA_PVC,
-    ),
-)
-
-DATA_VOLUME_MOUNT = k8s.V1VolumeMount(
-    name="data-volume",
-    mount_path=STORAGE_ROOT,
-)
-
-POD_ENV_VARS = {
-    "PDM_STORAGE_ROOT": STORAGE_ROOT,
-    "PYTHONPATH": PROJECT_ROOT,
-}
-
 
 # ---------------------------------------------------------------------------
-# Helper: build shell command that cd's into project root first
+# Helper: build bash command with correct env and working dir
 # ---------------------------------------------------------------------------
 
-def _pod_cmd(python_module: str, *args: str) -> list:
-    """Return arguments list for KubernetesPodOperator using /bin/bash -c."""
-    cmd = f"cd {PROJECT_ROOT} && python -m {python_module}"
-    if args:
-        cmd += " " + " ".join(args)
-    return [cmd]
+def _bash_cmd(python_module: str, *args: str) -> str:
+    """Build a bash command that sets up env, installs deps, and runs a script."""
+    cmd_args = " ".join(args) if args else ""
+    return (
+        f"{PIP_INSTALL}"
+        f"export PYTHONPATH={PROJECT_ROOT}:$PYTHONPATH && "
+        f"export PDM_STORAGE_ROOT={STORAGE_ROOT} && "
+        f"cd {PROJECT_ROOT} && "
+        f"python -m {python_module} {cmd_args}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +99,7 @@ def spark_application_yaml(
             "mode": "cluster",
             "image": SPARK_IMAGE,
             "imagePullPolicy": "Always",
-            "mainApplicationFile": f"local://{PROJECT_ROOT}/{main_file}",
+            "mainApplicationFile": f"local://{SPARK_PROJECT_ROOT}/{main_file}",
             "arguments": args or [],
             "sparkVersion": "3.5.0",
             "restartPolicy": {"type": "OnFailure", "onFailureRetries": 2},
@@ -123,10 +114,10 @@ def spark_application_yaml(
                 "memory": driver_memory,
                 "serviceAccount": SERVICE_ACCOUNT,
                 "volumeMounts": [
-                    {"name": "data-volume", "mountPath": STORAGE_ROOT}
+                    {"name": "data-volume", "mountPath": SPARK_STORAGE_ROOT}
                 ],
                 "env": [
-                    {"name": "PDM_STORAGE_ROOT", "value": STORAGE_ROOT},
+                    {"name": "PDM_STORAGE_ROOT", "value": SPARK_STORAGE_ROOT},
                 ],
             },
             "executor": {
@@ -134,10 +125,10 @@ def spark_application_yaml(
                 "instances": num_executors,
                 "memory": executor_memory,
                 "volumeMounts": [
-                    {"name": "data-volume", "mountPath": STORAGE_ROOT}
+                    {"name": "data-volume", "mountPath": SPARK_STORAGE_ROOT}
                 ],
                 "env": [
-                    {"name": "PDM_STORAGE_ROOT", "value": STORAGE_ROOT},
+                    {"name": "PDM_STORAGE_ROOT", "value": SPARK_STORAGE_ROOT},
                 ],
             },
         },
@@ -171,33 +162,21 @@ with DAG(
 
     start = EmptyOperator(task_id="start")
 
-    ingest_cmapss = KubernetesPodOperator(
+    ingest_cmapss = BashOperator(
         task_id="ingest_cmapss",
-        namespace=USER_NAMESPACE,
-        image=SPARK_IMAGE,
-        cmds=["/bin/bash", "-c"],
-        arguments=_pod_cmd("scripts.ingestion.ingest_cmapss", "--source", "nasa", "--subsets", "FD001"),
-        env_vars=POD_ENV_VARS,
-        volumes=[DATA_VOLUME],
-        volume_mounts=[DATA_VOLUME_MOUNT],
-        name="ingest-cmapss",
-        get_logs=True,
-        is_delete_operator_pod=True,
+        bash_command=_bash_cmd(
+            "scripts.ingestion.ingest_cmapss",
+            "--source", "nasa", "--subsets", "FD001",
+        ),
         doc_md="Download and stage NASA C-MAPSS FD001 dataset.",
     )
 
-    ingest_maintnet = KubernetesPodOperator(
+    ingest_maintnet = BashOperator(
         task_id="ingest_maintnet",
-        namespace=USER_NAMESPACE,
-        image=SPARK_IMAGE,
-        cmds=["/bin/bash", "-c"],
-        arguments=_pod_cmd("scripts.ingestion.ingest_maintnet", "--domains", "aviation"),
-        env_vars=POD_ENV_VARS,
-        volumes=[DATA_VOLUME],
-        volume_mounts=[DATA_VOLUME_MOUNT],
-        name="ingest-maintnet",
-        get_logs=True,
-        is_delete_operator_pod=True,
+        bash_command=_bash_cmd(
+            "scripts.ingestion.ingest_maintnet",
+            "--domains", "aviation",
+        ),
         doc_md="Download and stage MaintNet aviation logbook datasets + language resources.",
     )
 
@@ -205,41 +184,23 @@ with DAG(
     # Validation Gate: Raw data
     # =======================================================================
 
-    validate_raw_cmapss = KubernetesPodOperator(
+    validate_raw_cmapss = BashOperator(
         task_id="validate_raw_cmapss",
-        namespace=USER_NAMESPACE,
-        image=SPARK_IMAGE,
-        cmds=["/bin/bash", "-c"],
-        arguments=_pod_cmd(
+        bash_command=_bash_cmd(
             "scripts.validation.validate",
             "--stage", "raw", "--dataset", "cmapss", "--subset", "FD001",
             "--output-dir", f"{STORAGE_ROOT}/validation_reports/",
         ),
-        env_vars=POD_ENV_VARS,
-        volumes=[DATA_VOLUME],
-        volume_mounts=[DATA_VOLUME_MOUNT],
-        name="validate-raw-cmapss",
-        get_logs=True,
-        is_delete_operator_pod=True,
         doc_md="Validate raw C-MAPSS data: row counts, schema, nulls, monotonic cycles.",
     )
 
-    validate_raw_maintnet = KubernetesPodOperator(
+    validate_raw_maintnet = BashOperator(
         task_id="validate_raw_maintnet",
-        namespace=USER_NAMESPACE,
-        image=SPARK_IMAGE,
-        cmds=["/bin/bash", "-c"],
-        arguments=_pod_cmd(
+        bash_command=_bash_cmd(
             "scripts.validation.validate",
             "--stage", "raw", "--dataset", "maintnet", "--domain", "aviation",
             "--output-dir", f"{STORAGE_ROOT}/validation_reports/",
         ),
-        env_vars=POD_ENV_VARS,
-        volumes=[DATA_VOLUME],
-        volume_mounts=[DATA_VOLUME_MOUNT],
-        name="validate-raw-maintnet",
-        get_logs=True,
-        is_delete_operator_pod=True,
         doc_md="Validate raw MaintNet data: manifest exists, files accessible.",
     )
 
@@ -289,40 +250,22 @@ with DAG(
         timeout=3600,
     )
 
-    validate_sensor_processed = KubernetesPodOperator(
+    validate_sensor_processed = BashOperator(
         task_id="validate_sensor_processed",
-        namespace=USER_NAMESPACE,
-        image=SPARK_IMAGE,
-        cmds=["/bin/bash", "-c"],
-        arguments=_pod_cmd(
+        bash_command=_bash_cmd(
             "scripts.validation.validate",
             "--stage", "processed", "--dataset", "cmapss", "--subset", "FD001",
             "--output-dir", f"{STORAGE_ROOT}/validation_reports/",
         ),
-        env_vars=POD_ENV_VARS,
-        volumes=[DATA_VOLUME],
-        volume_mounts=[DATA_VOLUME_MOUNT],
-        name="validate-sensor-processed",
-        get_logs=True,
-        is_delete_operator_pod=True,
     )
 
-    validate_sensor_features = KubernetesPodOperator(
+    validate_sensor_features = BashOperator(
         task_id="validate_sensor_features",
-        namespace=USER_NAMESPACE,
-        image=SPARK_IMAGE,
-        cmds=["/bin/bash", "-c"],
-        arguments=_pod_cmd(
+        bash_command=_bash_cmd(
             "scripts.validation.validate",
             "--stage", "features", "--dataset", "cmapss", "--subset", "FD001",
             "--output-dir", f"{STORAGE_ROOT}/validation_reports/",
         ),
-        env_vars=POD_ENV_VARS,
-        volumes=[DATA_VOLUME],
-        volume_mounts=[DATA_VOLUME_MOUNT],
-        name="validate-sensor-features",
-        get_logs=True,
-        is_delete_operator_pod=True,
     )
 
     # --- Branch B: MaintNet Text ETL ---
@@ -361,22 +304,13 @@ with DAG(
         timeout=3600,
     )
 
-    validate_text_processed = KubernetesPodOperator(
+    validate_text_processed = BashOperator(
         task_id="validate_text_processed",
-        namespace=USER_NAMESPACE,
-        image=SPARK_IMAGE,
-        cmds=["/bin/bash", "-c"],
-        arguments=_pod_cmd(
+        bash_command=_bash_cmd(
             "scripts.validation.validate",
             "--stage", "processed", "--dataset", "maintnet", "--domain", "aviation",
             "--output-dir", f"{STORAGE_ROOT}/validation_reports/",
         ),
-        env_vars=POD_ENV_VARS,
-        volumes=[DATA_VOLUME],
-        volume_mounts=[DATA_VOLUME_MOUNT],
-        name="validate-text-processed",
-        get_logs=True,
-        is_delete_operator_pod=True,
     )
 
     # =======================================================================
@@ -398,7 +332,7 @@ with DAG(
             f'echo "  Text features:   {STORAGE_ROOT}/features/maintnet/aviation/"; '
             'echo "Ready for Phase 3 (Analytics) and Phase 4 (Model Training)."'
         ),
-        doc_md="Log completion message. In production, this could trigger a Slack/email notification.",
+        doc_md="Log completion message.",
     )
 
     # =======================================================================
