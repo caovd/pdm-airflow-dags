@@ -21,7 +21,6 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.providers.cncf.kubernetes.operators.spark_kubernetes import SparkKubernetesOperator
-from airflow.providers.cncf.kubernetes.sensors.spark_kubernetes import SparkKubernetesSensor
 from airflow.operators.empty import EmptyOperator
 from airflow.utils.trigger_rule import TriggerRule
 
@@ -213,14 +212,6 @@ with DAG(
         ),
     )
 
-    sensor_etl_sensor = SparkKubernetesSensor(
-        task_id="sensor_etl_monitor",
-        namespace=NAMESPACE,
-        application_name=SENSOR_SPARK_APP,
-        poke_interval=30,
-        timeout=3600,
-    )
-
     validate_sensor_processed = BashOperator(
         task_id="validate_sensor_processed",
         bash_command=_bash_cmd(
@@ -261,14 +252,6 @@ with DAG(
             "- LLM instruction-tuning format (JSONL)\n"
             "- Output: Parquet + JSONL on GreenLake File Storage"
         ),
-    )
-
-    text_etl_sensor = SparkKubernetesSensor(
-        task_id="text_etl_monitor",
-        namespace=NAMESPACE,
-        application_name=TEXT_SPARK_APP,
-        poke_interval=30,
-        timeout=3600,
     )
 
     validate_text_processed = BashOperator(
@@ -314,8 +297,8 @@ with DAG(
     [validate_raw_cmapss, validate_raw_maintnet] >> raw_validated
 
     # Parallel ETL branches — cleanup old SparkApp before creating new one
-    raw_validated >> cleanup_sensor_spark >> sensor_etl >> sensor_etl_sensor >> validate_sensor_processed >> validate_sensor_features
-    raw_validated >> cleanup_text_spark >> text_etl >> text_etl_sensor >> validate_text_processed
+    raw_validated >> cleanup_sensor_spark >> sensor_etl >> validate_sensor_processed >> validate_sensor_features
+    raw_validated >> cleanup_text_spark >> text_etl >> validate_text_processed
 
     # Join
     [validate_sensor_features, validate_text_processed] >> all_etl_complete >> notify_data_ready
