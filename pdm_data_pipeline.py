@@ -106,8 +106,8 @@ try:
     print("Deleted spark-submit job")
     time.sleep(3)
 except client.exceptions.ApiException as e:
-    if e.status == 404:
-        print("No spark-submit job to clean up")
+    if e.status in (404, 403):
+        print(f"Skipping job cleanup (status {{e.status}}) — not critical")
     else:
         raise
 
