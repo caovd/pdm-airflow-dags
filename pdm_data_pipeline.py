@@ -13,7 +13,8 @@ Pipeline flow:
 Runs on HPE AI Essentials' built-in Apache Airflow.
 Executor pods auto-mount user PVC at /mnt/user, so project code and data
 are accessible at /mnt/user/pdm-demo/ without custom images.
-Spark jobs are submitted via SparkKubernetesOperator to the AIE Spark cluster.
+Spark jobs are submitted via SparkKubernetesOperator using YAML specs
+stored on the user PVC at /mnt/user/pdm-demo/k8s/spark/.
 """
 
 from datetime import datetime, timedelta
@@ -31,17 +32,11 @@ from airflow.utils.trigger_rule import TriggerRule
 # ---------------------------------------------------------------------------
 
 NAMESPACE = "pdm-demo"
-SPARK_IMAGE = "caovd/pdm-spark-etl:latest"
-SERVICE_ACCOUNT = "spark"
 
 # Paths on the user PVC (auto-mounted in every executor pod at /mnt/user)
 PROJECT_ROOT = "/mnt/user/pdm-demo"
 STORAGE_ROOT = "/mnt/user/pdm-demo/data"
-
-# Spark jobs use PVC pv-datasets mounted at /mnt/data inside the Spark container
-SPARK_STORAGE_ROOT = "/mnt/data"
-SPARK_PROJECT_ROOT = "/opt/pdm"
-DATA_PVC = "pv-datasets"
+SPARK_YAML_DIR = "/mnt/user/pdm-demo/k8s/spark"
 
 # Pip install command to ensure dependencies are available in executor pods
 PIP_INSTALL = "pip install --quiet --break-system-packages pandas requests pyarrow 2>/dev/null; "
@@ -70,74 +65,6 @@ def _bash_cmd(python_module: str, *args: str) -> str:
         f"cd {PROJECT_ROOT} && "
         f"python -m {python_module} {cmd_args}"
     )
-
-
-# ---------------------------------------------------------------------------
-# Helper: SparkApplication YAML generator
-# ---------------------------------------------------------------------------
-
-def spark_application_yaml(
-    name: str,
-    main_file: str,
-    args: list = None,
-    driver_memory: str = "4g",
-    executor_memory: str = "8g",
-    executor_cores: int = 4,
-    num_executors: int = 2,
-    gpu: int = 0,
-) -> dict:
-    """Generate a SparkApplication spec for SparkKubernetesOperator."""
-    spec = {
-        "apiVersion": "sparkoperator.k8s.io/v1beta2",
-        "kind": "SparkApplication",
-        "metadata": {
-            "name": name,
-            "namespace": NAMESPACE,
-        },
-        "spec": {
-            "type": "Python",
-            "mode": "cluster",
-            "image": SPARK_IMAGE,
-            "imagePullPolicy": "Always",
-            "mainApplicationFile": f"local://{SPARK_PROJECT_ROOT}/{main_file}",
-            "arguments": args or [],
-            "sparkVersion": "3.5.0",
-            "restartPolicy": {"type": "OnFailure", "onFailureRetries": 2},
-            "volumes": [
-                {
-                    "name": "data-volume",
-                    "persistentVolumeClaim": {"claimName": DATA_PVC},
-                }
-            ],
-            "driver": {
-                "cores": 1,
-                "memory": driver_memory,
-                "serviceAccount": SERVICE_ACCOUNT,
-                "volumeMounts": [
-                    {"name": "data-volume", "mountPath": SPARK_STORAGE_ROOT}
-                ],
-                "env": [
-                    {"name": "PDM_STORAGE_ROOT", "value": SPARK_STORAGE_ROOT},
-                ],
-            },
-            "executor": {
-                "cores": executor_cores,
-                "instances": num_executors,
-                "memory": executor_memory,
-                "volumeMounts": [
-                    {"name": "data-volume", "mountPath": SPARK_STORAGE_ROOT}
-                ],
-                "env": [
-                    {"name": "PDM_STORAGE_ROOT", "value": SPARK_STORAGE_ROOT},
-                ],
-            },
-        },
-    }
-
-    if gpu > 0:
-        spec["spec"]["executor"]["gpu"] = {"name": "nvidia.com/gpu", "quantity": gpu}
-
-    return spec
 
 
 # ---------------------------------------------------------------------------
@@ -216,20 +143,10 @@ with DAG(
 
     # --- Branch A: C-MAPSS Sensor ETL ---
 
-    sensor_etl_spec = spark_application_yaml(
-        name="cmapss-sensor-etl-fd001",
-        main_file="scripts/etl/sensor_etl_spark.py",
-        args=["--subset", "FD001"],
-        driver_memory="4g",
-        executor_memory="8g",
-        executor_cores=4,
-        num_executors=2,
-    )
-
     sensor_etl = SparkKubernetesOperator(
         task_id="sensor_etl_spark",
         namespace=NAMESPACE,
-        application_file=sensor_etl_spec,
+        application_file=f"{SPARK_YAML_DIR}/cmapss-sensor-etl.yaml",
         do_xcom_push=True,
         doc_md=(
             "Spark job: C-MAPSS sensor ETL.\n"
@@ -270,20 +187,10 @@ with DAG(
 
     # --- Branch B: MaintNet Text ETL ---
 
-    text_etl_spec = spark_application_yaml(
-        name="maintnet-text-etl-aviation",
-        main_file="scripts/etl/text_etl_spark.py",
-        args=["--domain", "aviation"],
-        driver_memory="4g",
-        executor_memory="4g",
-        executor_cores=2,
-        num_executors=2,
-    )
-
     text_etl = SparkKubernetesOperator(
         task_id="text_etl_spark",
         namespace=NAMESPACE,
-        application_file=text_etl_spec,
+        application_file=f"{SPARK_YAML_DIR}/maintnet-text-etl.yaml",
         do_xcom_push=True,
         doc_md=(
             "Spark job: MaintNet text ETL.\n"
