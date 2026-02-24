@@ -1,8 +1,12 @@
-apiVersion: sparkoperator.k8s.io/v1beta2
+apiVersion: sparkoperator.hpe.com/v1beta2
 kind: SparkApplication
 metadata:
   name: cmapss-sensor-etl-fd001
   namespace: pdm-demo
+  labels:
+    app.kubernetes.io/part-of: pdm-demo
+    pipeline-phase: "2"
+    track: sensor
 spec:
   type: Python
   mode: cluster
@@ -16,27 +20,40 @@ spec:
   restartPolicy:
     type: OnFailure
     onFailureRetries: 2
+    onFailureRetryInterval: 30
   volumes:
     - name: data-volume
       persistentVolumeClaim:
         claimName: pv-datasets
   driver:
     cores: 1
+    coreLimit: "2"
     memory: "4g"
     serviceAccount: spark
+    labels:
+      component: spark-driver
+      job: sensor-etl
     volumeMounts:
       - name: data-volume
         mountPath: /mnt/data
     env:
       - name: PDM_STORAGE_ROOT
-        value: /mnt/data
+        value: "/mnt/data"
+      - name: PYTHONPATH
+        value: "/opt/pdm"
   executor:
     cores: 4
+    coreLimit: "4"
     instances: 2
     memory: "8g"
+    labels:
+      component: spark-executor
+      job: sensor-etl
     volumeMounts:
       - name: data-volume
         mountPath: /mnt/data
     env:
       - name: PDM_STORAGE_ROOT
-        value: /mnt/data
+        value: "/mnt/data"
+      - name: PYTHONPATH
+        value: "/opt/pdm"

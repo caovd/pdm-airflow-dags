@@ -13,8 +13,7 @@ Pipeline flow:
 Runs on HPE AI Essentials' built-in Apache Airflow.
 Executor pods auto-mount user PVC at /mnt/user, so project code and data
 are accessible at /mnt/user/pdm-demo/ without custom images.
-Spark jobs are submitted via SparkKubernetesOperator using YAML specs
-stored on the user PVC at /mnt/user/pdm-demo/k8s/spark/.
+Spark jobs use HPE's Spark Operator (sparkoperator.hpe.com/v1beta2).
 """
 
 from datetime import datetime, timedelta
@@ -33,10 +32,13 @@ from airflow.utils.trigger_rule import TriggerRule
 
 NAMESPACE = "pdm-demo"
 
+# HPE Spark Operator API group (differs from open-source sparkoperator.k8s.io)
+SPARK_API_GROUP = "sparkoperator.hpe.com"
+SPARK_API_VERSION = "v1beta2"
+
 # Paths on the user PVC (auto-mounted in every executor pod at /mnt/user)
 PROJECT_ROOT = "/mnt/user/pdm-demo"
 STORAGE_ROOT = "/mnt/user/pdm-demo/data"
-SPARK_YAML_DIR = "/mnt/user/pdm-demo/k8s/spark"
 
 # Pip install command to ensure dependencies are available in executor pods
 PIP_INSTALL = "pip install --quiet --break-system-packages pandas requests pyarrow 2>/dev/null; "
@@ -146,14 +148,16 @@ with DAG(
     sensor_etl = SparkKubernetesOperator(
         task_id="sensor_etl_spark",
         namespace=NAMESPACE,
-        application_file=f"cmapss-sensor-etl.yaml",
+        application_file="cmapss-sensor-etl.yaml",
+        api_group=SPARK_API_GROUP,
+        api_version=SPARK_API_VERSION,
         do_xcom_push=True,
         doc_md=(
             "Spark job: C-MAPSS sensor ETL.\n"
             "- Drop constant sensors\n"
             "- Operating-condition min-max normalisation\n"
             "- Piecewise-linear RUL labeling (cap=125)\n"
-            "- Sliding window creation (30×14)\n"
+            "- Sliding window creation (30x14)\n"
             "- Train/val/test split by engine\n"
             "- Output: Parquet on GreenLake File Storage"
         ),
@@ -163,6 +167,8 @@ with DAG(
         task_id="sensor_etl_monitor",
         namespace=NAMESPACE,
         application_name="cmapss-sensor-etl-fd001",
+        api_group=SPARK_API_GROUP,
+        api_version=SPARK_API_VERSION,
         poke_interval=30,
         timeout=3600,
     )
@@ -190,7 +196,9 @@ with DAG(
     text_etl = SparkKubernetesOperator(
         task_id="text_etl_spark",
         namespace=NAMESPACE,
-        application_file=f"maintnet-text-etl.yaml",
+        application_file="maintnet-text-etl.yaml",
+        api_group=SPARK_API_GROUP,
+        api_version=SPARK_API_VERSION,
         do_xcom_push=True,
         doc_md=(
             "Spark job: MaintNet text ETL.\n"
@@ -207,6 +215,8 @@ with DAG(
         task_id="text_etl_monitor",
         namespace=NAMESPACE,
         application_name="maintnet-text-etl-aviation",
+        api_group=SPARK_API_GROUP,
+        api_version=SPARK_API_VERSION,
         poke_interval=30,
         timeout=3600,
     )
