@@ -201,7 +201,7 @@ with DAG(
         task_id="sensor_etl_spark",
         namespace=NAMESPACE,
         application_file="cmapss-sensor-etl.yaml",
-        do_xcom_push=True,
+        do_xcom_push=False,
         doc_md=(
             "Spark job: C-MAPSS sensor ETL.\n"
             "- Drop constant sensors\n"
@@ -251,7 +251,7 @@ with DAG(
         task_id="text_etl_spark",
         namespace=NAMESPACE,
         application_file="maintnet-text-etl.yaml",
-        do_xcom_push=True,
+        do_xcom_push=False,
         doc_md=(
             "Spark job: MaintNet text ETL.\n"
             "- Schema detection & column mapping\n"
